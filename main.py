@@ -14,7 +14,7 @@ script = """
 Walker:  Hey Maddie, today we’re talking about confidence.
 Maddie: (chuckle) Oh I love this topic...!
 Walker: (calm) Confidence is something you build step by step.
-Maddie: (laughing) Yes! You don’t need perfect grammar.
+Maddie: (laughing) (chuckle) Yes! You don’t need perfect grammar.
 """
 
 # 3️⃣ Voices
