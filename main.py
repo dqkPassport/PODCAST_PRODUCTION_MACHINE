@@ -12,7 +12,7 @@ client = OpenAI()
 # 2️⃣ Example script (replace with full 15-min script later)
 script = """
 Walker:  Hey Maddie, today we’re talking about confidence.
-Maddie: (chuckle) (Haha) Oh I love this topic...!
+Maddie: (chuckle) (Haha) Oh I love this topic......!
 Walker: Confidence is something you build step by step.
 Maddie: (laughing) (chuckle) Yes! You don’t need perfect grammar.
 """
