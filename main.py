@@ -1,117 +1,165 @@
 import os
 import re
 import subprocess
-import random
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# 1️⃣ Load API key
+# ==========================================
+# 1️⃣ Setup
+# ==========================================
+
 load_dotenv()
 client = OpenAI()
 
-# 2️⃣ Example script (replace with full 15-min script later)
-script = """
-Walker:  Hey Maddie, today we’re talking about confidence.
-Maddie: (chuckle) (Haha) Oh I love this topic......!
-Walker: Confidence is something you build step by step.
-Maddie: (laughing) (chuckle) Yes! You don’t need perfect grammar.
-"""
-
-# 3️⃣ Voices
-VOICE_MAP = {
-    "Walker": "cedar",  # male
-    "Maddie": "marin",  # female
-}
-
-# 4️⃣ Output folder
 output_folder = "output"
 os.makedirs(output_folder, exist_ok=True)
 
-# 5️⃣ Path to ffmpeg.exe (update to your installation)
-ffmpeg_path = r"C:\DQK\ffmpeg\bin\ffmpeg.exe"
+ffmpeg_path = r"C:\DQK\ffmpeg\bin\ffmpeg.exe"  # adjust if needed
+
+# ==========================================
+# 2️⃣ Script
+# ==========================================
+
+script = """
+JT: Exactly. (chuckle) And I think everyone thinks they need grammar books… but that’s not true.
+Maddie: Totally! Speaking is about practice, not rules. Even talking to yourself counts.
+JT: (laugh) I do that all the time. Sometimes I practice dialogues in my car.
+Maddie: Same! Or when I’m cooking, I repeat phrases or sentences out loud. It feels silly, but it works.
+
+"""
+
+VOICE_MAP = {
+    "JT": "cedar",
+    "Maddie": "marin",
+}
+
+# ==========================================
+# 3️⃣ Parse Script
+# ==========================================
 
 
-# 6️⃣ Function to generate TTS for each line
-def generate_audio(text, voice, filename):
-    print(f"Generating {voice} voice for: {text}")
+def parse_script(script_text):
+    pattern = r"(JT|Maddie):\s*(.*?)(?=\n(?:JT|Maddie):|$)"
+    return re.findall(pattern, script_text, re.S)
+
+
+# ==========================================
+# 4️⃣ Generate TTS
+# ==========================================
+
+
+def generate_tts_block(speaker, text, index):
+    filename = os.path.join(output_folder, f"block_{index:03d}_{speaker}.mp3")
+    print(f"Generating {speaker}...")
+
     with client.audio.speech.with_streaming_response.create(
-        model="gpt-4o-mini-tts", voice=voice, input=text
+        model="gpt-4o-mini-tts",
+        voice=VOICE_MAP[speaker],
+        input=text.strip(),
     ) as response:
         response.stream_to_file(filename)
 
-
-# 7️⃣ Split text by sentences for natural pauses
-def split_text_with_pauses(text):
-    sentences = re.split(r"([.!?])", text)
-    chunks = []
-    for i in range(0, len(sentences) - 1, 2):
-        chunk = sentences[i].strip() + sentences[i + 1]
-        chunks.append(chunk)
-    return chunks
+    return filename
 
 
-# 8️⃣ Generate a tiny random silence MP3
-def generate_silence(filename, duration):
+# ==========================================
+# 5️⃣ Merge Audio
+# ==========================================
+
+
+def merge_audio_files(audio_files, output_file):
+    list_path = os.path.join(output_folder, "file_list.txt")
+
+    with open(list_path, "w", encoding="utf-8") as f:
+        for file in sorted(audio_files):
+            full_path = os.path.abspath(file).replace("\\", "/")
+            f.write(f"file '{full_path}'\n")
+
     subprocess.run(
         [
             ffmpeg_path,
             "-f",
-            "lavfi",
+            "concat",
+            "-safe",
+            "0",
             "-i",
-            "anullsrc=r=44100:cl=stereo",
-            "-t",
-            str(duration),
-            "-q:a",
-            "9",
+            list_path,
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "192k",
             "-y",
-            filename,
+            output_file,
+        ],
+        check=True,
+    )
+
+    os.remove(list_path)
+
+
+# ==========================================
+# 6️⃣ Normalize to -16 LUFS
+# ==========================================
+
+
+def normalize_lufs(input_file, output_file):
+    print("Normalizing to -16 LUFS...")
+
+    subprocess.run(
+        [
+            ffmpeg_path,
+            "-i",
+            input_file,
+            "-af",
+            "loudnorm=I=-16:TP=-1.5:LRA=11",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "192k",
+            "-y",
+            output_file,
         ],
         check=True,
     )
 
 
-# 9️⃣ Parse the script
-lines = re.findall(r"(Walker|Maddie): (.+)", script)
-audio_files = []
+# ==========================================
+# 7️⃣ Main
+# ==========================================
 
-for i, (speaker, text) in enumerate(lines):
-    for j, sentence in enumerate(split_text_with_pauses(text)):
-        # 9a️⃣ Generate TTS for each sentence
-        line_file = os.path.join(output_folder, f"line_{i}_{j}.mp3")
-        generate_audio(sentence, VOICE_MAP[speaker], line_file)
-        audio_files.append(line_file)
 
-        # 9b️⃣ Add random micro-pause after each sentence (0.1-0.3s)
-        silence_duration = round(random.uniform(0.1, 0.3), 2)
-        silence_file = os.path.join(output_folder, f"silence_{i}_{j}.mp3")
-        generate_silence(silence_file, silence_duration)
-        audio_files.append(silence_file)
+def main():
+    print("🚀 Passport Podcast Engine Starting...\n")
 
-# 10️⃣ Create file list for FFmpeg concat
-final_list_file = os.path.join(output_folder, "file_list.txt")
-with open(final_list_file, "w") as f:
-    for file in audio_files:
-        f.write(f"file '{os.path.abspath(file)}'\n")
+    lines = parse_script(script)
 
-# 11️⃣ Merge all lines into one final episode
-final_output = os.path.join(output_folder, "final_episode.mp3")
-subprocess.run(
-    [
-        ffmpeg_path,
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        final_list_file,
-        "-c:a",
-        "mp3",
-        "-b:a",
-        "192k",
-        "-y",
-        final_output,
-    ],
-    check=True,
-)
+    if not lines:
+        print("No script content found.")
+        return
 
-print("✅ Episode created successfully at:", final_output)
+    # Generate TTS in parallel
+    audio_files = []
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = []
+        for i, (speaker, text) in enumerate(lines):
+            futures.append(executor.submit(generate_tts_block, speaker, text, i))
+
+        for future in futures:
+            audio_files.append(future.result())
+
+    # Merge
+    merged_file = os.path.join(output_folder, "part.mp3")
+    merge_audio_files(audio_files, merged_file)
+
+    # Normalize
+    normalized_file = os.path.join(output_folder, "partLUFS.mp3")
+    normalize_lufs(merged_file, normalized_file)
+
+    print("\n✅ Done!")
+    print("Raw file:      ", merged_file)
+    print("Normalized:    ", normalized_file)
+
+
+if __name__ == "__main__":
+    main()
