@@ -18,7 +18,7 @@ if not API_KEY:
     print("❌ ERROR: INWORLD_KEY not found in .env file!")
     exit()
 
-VOICES = {"JT": "Edward", "Maddie": "Lauren"}
+VOICES = {"JT": "Nate", "Maddie": "Kayla"}
 
 # --- FOLDER SETUP ---
 output_dir = Path("inworld")

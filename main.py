@@ -1,114 +1,165 @@
-import requests
-import base64
 import os
-import ffmpeg
-from pathlib import Path
-from datetime import datetime
+import re
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
+from openai import OpenAI
 
-# --- INITIALIZATION ---
+# ==========================================
+# 1️⃣ Setup
+# ==========================================
+
 load_dotenv()
-API_KEY = os.getenv("INWORLD_KEY")
-MODEL_ID = "inworld-tts-1.5-max"
+client = OpenAI()
 
-# YOUR SPECIFIC FFmpeg PATH
-FFMPEG_PATH = r"C:\DQK\ffmpeg\bin\ffmpeg.exe"
+output_folder = "output"
+os.makedirs(output_folder, exist_ok=True)
 
-if not API_KEY:
-    print("❌ ERROR: INWORLD_KEY not found in .env file!")
-    exit()
+ffmpeg_path = r"C:\DQK\ffmpeg\bin\ffmpeg.exe"  # adjust if needed
 
-VOICES = {"JT": "Edward", "Maddie": "Lauren"}
+# ==========================================
+# 2️⃣ Script
+# ==========================================
 
-# --- FOLDER SETUP ---
-output_dir = Path("inworld")
-script_dir = Path("script")
+script = """
+JT: Exactly. (chuckle) And I think everyone thinks they need grammar books… but that’s not true.
+Maddie: Totally! Speaking is about practice, not rules. Even talking to yourself counts.
+JT: (laugh) I do that all the time. Sometimes I practice dialogues in my car.
+Maddie: Same! Or when I’m cooking, I repeat phrases or sentences out loud. It feels silly, but it works.
 
-output_dir.mkdir(parents=True, exist_ok=True)
-script_dir.mkdir(parents=True, exist_ok=True)
+"""
 
+VOICE_MAP = {
+    "JT": "cedar",
+    "Maddie": "marin",
+}
 
-def generate_audio(voice_name, text, filename):
-    url = "https://api.inworld.ai/tts/v1/voice"
-    headers = {
-        "Authorization": f"Basic {API_KEY.strip()}",
-        "Content-Type": "application/json",
-    }
-    payload = {"text": text, "voiceId": VOICES[voice_name], "modelId": MODEL_ID}
-
-    response = requests.post(url, json=payload, headers=headers)
-    if response.status_code == 200:
-        audio_data = base64.b64decode(response.json()["audioContent"])
-        file_path = output_dir / filename
-        with open(file_path, "wb") as f:
-            f.write(audio_data)
-        return str(file_path)
-    else:
-        print(f"❌ Error for {voice_name}: {response.text}")
-        return None
+# ==========================================
+# 3️⃣ Parse Script
+# ==========================================
 
 
-def merge_audio_files(file_list, output_file):
-    print(f"\nStitching lines into {output_file.name}...")
-    try:
-        input_streams = [ffmpeg.input(f) for f in file_list]
-        joined = ffmpeg.concat(*input_streams, a=1, v=0)
-
-        # We pass the cmd argument to point to your specific ffmpeg.exe
-        out = ffmpeg.output(joined, str(output_file))
-        out.run(overwrite_output=True, quiet=True, cmd=FFMPEG_PATH)
-
-        print(f"⭐ SUCCESS! Your podcast is ready: {output_file}")
-
-        # Cleanup temp files
-        for f in file_list:
-            os.remove(f)
-        print("🧹 Cleanup complete.")
-
-    except ffmpeg.Error as e:
-        print(f"❌ FFmpeg Error: {e}")
+def parse_script(script_text):
+    pattern = r"(JT|Maddie):\s*(.*?)(?=\n(?:JT|Maddie):|$)"
+    return re.findall(pattern, script_text, re.S)
 
 
-def run_podcast_generator():
-    script_file = script_dir / "script.txt"
+# ==========================================
+# 4️⃣ Generate TTS
+# ==========================================
 
-    if not script_file.exists():
-        print(f"❌ ERROR: Could not find script.txt in '{script_dir}'!")
+
+def generate_tts_block(speaker, text, index):
+    filename = os.path.join(output_folder, f"block_{index:03d}_{speaker}.mp3")
+    print(f"Generating {speaker}...")
+
+    with client.audio.speech.with_streaming_response.create(
+        model="gpt-4o-mini-tts",
+        voice=VOICE_MAP[speaker],
+        input=text.strip(),
+    ) as response:
+        response.stream_to_file(filename)
+
+    return filename
+
+
+# ==========================================
+# 5️⃣ Merge Audio
+# ==========================================
+
+
+def merge_audio_files(audio_files, output_file):
+    list_path = os.path.join(output_folder, "file_list.txt")
+
+    with open(list_path, "w", encoding="utf-8") as f:
+        for file in sorted(audio_files):
+            full_path = os.path.abspath(file).replace("\\", "/")
+            f.write(f"file '{full_path}'\n")
+
+    subprocess.run(
+        [
+            ffmpeg_path,
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            list_path,
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "192k",
+            "-y",
+            output_file,
+        ],
+        check=True,
+    )
+
+    os.remove(list_path)
+
+
+# ==========================================
+# 6️⃣ Normalize to -16 LUFS
+# ==========================================
+
+
+def normalize_lufs(input_file, output_file):
+    print("Normalizing to -16 LUFS...")
+
+    subprocess.run(
+        [
+            ffmpeg_path,
+            "-i",
+            input_file,
+            "-af",
+            "loudnorm=I=-16:TP=-1.5:LRA=11",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "192k",
+            "-y",
+            output_file,
+        ],
+        check=True,
+    )
+
+
+# ==========================================
+# 7️⃣ Main
+# ==========================================
+
+
+def main():
+    print("🚀 Passport Podcast Engine Starting...\n")
+
+    lines = parse_script(script)
+
+    if not lines:
+        print("No script content found.")
         return
 
-    with open(script_file, "r", encoding="utf-8") as f:
-        lines = f.readlines()
+    # Generate TTS in parallel
+    audio_files = []
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = []
+        for i, (speaker, text) in enumerate(lines):
+            futures.append(executor.submit(generate_tts_block, speaker, text, i))
 
-    generated_paths = []
-    file_count = 1
+        for future in futures:
+            audio_files.append(future.result())
 
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
+    # Merge
+    merged_file = os.path.join(output_folder, "part.mp3")
+    merge_audio_files(audio_files, merged_file)
 
-        if line.startswith("JT:"):
-            speaker, text = "JT", line.replace("JT:", "").strip()
-        elif line.startswith("Maddie:"):
-            speaker, text = "Maddie", line.replace("Maddie:", "").strip()
-        else:
-            continue
+    # Normalize
+    normalized_file = os.path.join(output_folder, "partLUFS.mp3")
+    normalize_lufs(merged_file, normalized_file)
 
-        filename = f"temp_{file_count:02d}_{speaker}.mp3"
-        path = generate_audio(speaker, text, filename)
-        if path:
-            generated_paths.append(path)
-            print(f"✅ Generated: {speaker} line {file_count}")
-            file_count += 1
-
-    if generated_paths:
-        # Create a unique filename with the current date and time
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        final_filename = f"final_{timestamp}.mp3"
-        final_mp3_path = output_dir / final_filename
-
-        merge_audio_files(generated_paths, final_mp3_path)
+    print("\n✅ Done!")
+    print("Raw file:      ", merged_file)
+    print("Normalized:    ", normalized_file)
 
 
 if __name__ == "__main__":
-    run_podcast_generator()
+    main()
