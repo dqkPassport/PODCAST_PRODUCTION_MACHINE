@@ -3,36 +3,41 @@ import base64
 import os
 import random
 import ffmpeg
+import hashlib
+import shutil
+import sys
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
+from tqdm import tqdm
 
 # --- INITIALIZATION ---
 load_dotenv()
-# Using INWORLD_API_KEY from your .env for security
 API_KEY = os.getenv("INWORLD_API_KEY")
 MODEL_ID = "inworld-tts-1.5-max"
-
-# Your specific Windows path for FFmpeg
 FFMPEG_PATH = r"C:\DQK\ffmpeg\bin\ffmpeg.exe"
 
 if not API_KEY:
     print("❌ ERROR: INWORLD_API_KEY not found in .env file!")
     exit()
 
-# Voices chosen for JT and Maddie (American accents)
 VOICES = {"JT": "Mark", "Maddie": "Lauren"}
 
 # --- FOLDER SETUP ---
 output_dir = Path("inworld")
 script_dir = Path("script")
+cache_dir = Path("cache")
 
-output_dir.mkdir(parents=True, exist_ok=True)
-script_dir.mkdir(parents=True, exist_ok=True)
+for folder in [output_dir, script_dir, cache_dir]:
+    folder.mkdir(parents=True, exist_ok=True)
+
+
+def get_text_hash(text, speaker):
+    """3.13 Compatible hashing to identify unique lines for the Cache System"""
+    return hashlib.md5(f"{speaker}:{text}".encode()).hexdigest()
 
 
 def generate_audio(voice_name, text, filename):
-    """Fetches high-quality TTS from Inworld API"""
     url = "https://api.inworld.ai/tts/v1/voice"
     headers = {
         "Authorization": f"Basic {API_KEY.strip()}",
@@ -49,68 +54,56 @@ def generate_audio(voice_name, text, filename):
                 f.write(audio_data)
             return str(file_path)
         else:
-            print(f"❌ API Error for {voice_name}: {response.text}")
+            print(f"\n❌ API Error for {voice_name}: {response.text}")
             return None
     except Exception as e:
-        print(f"❌ Connection Error: {e}")
+        print(f"\n❌ Connection Error: {e}")
         return None
 
 
 def merge_audio_files(file_list, output_file):
-    """Stitches lines and normalizes to -16 LUFS without a report"""
-    print(f"\nStitching and normalizing {output_file.name} to -16 LUFS...")
     try:
         input_streams = []
         for f in file_list:
-            # Generate random jitter (0.3s to 0.6s) for natural turn-taking
             delay_ms = random.randint(300, 600)
             stream = ffmpeg.input(os.path.abspath(f))
-
-            # Apply 'adelay' filter for natural pauses
             delayed_stream = stream.filter("adelay", f"{delay_ms}|{delay_ms}")
             input_streams.append(delayed_stream)
 
-        # 1. Concatenate all streams
         joined = ffmpeg.concat(*input_streams, a=1, v=0)
-
-        # 2. Apply 'loudnorm' filter to target -16 LUFS
         normalized = joined.filter("loudnorm", i=-16, tp=-1.5, lra=11)
 
-        # 3. Define output and run with your specific FFmpeg path
         out = ffmpeg.output(normalized, os.path.abspath(output_file))
         out.run(overwrite_output=True, quiet=True, cmd=FFMPEG_PATH, capture_stderr=True)
 
-        print(f"⭐ SUCCESS! Podcast ready: {output_file}")
-
-        # Cleanup individual temp files
+        # Cleanup temp files (keeping the cache safe)
         for f in file_list:
-            if os.path.exists(f):
+            if os.path.exists(f) and "temp_" in f:
                 os.remove(f)
-        print("🧹 Cleanup complete.")
-
+        return True
     except ffmpeg.Error as e:
         print(f"❌ FFmpeg Error Output:\n{e.stderr.decode('utf8')}")
+        return False
 
 
-def run_podcast_generator():
-    """Main loop: Reads script/s1.txt and triggers audio generation"""
-    script_file = script_dir / "s1.txt"
+def run_podcast_generator(script_filename, dry_run=False):
+    script_path = script_dir / script_filename
 
-    if not script_file.exists():
-        print(f"❌ ERROR: Could not find s1.txt in '{script_dir}'!")
+    if not script_path.exists():
+        print(f"❌ ERROR: {script_filename} not found in '{script_dir}'!")
         return
 
-    with open(script_file, "r", encoding="utf-8") as f:
-        lines = f.readlines()
+    with open(script_path, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip()]
+
+    print(f"📖 Processing: {script_filename} ({len(lines)} lines)")
+    if dry_run:
+        print("🧪 MODE: DRY RUN (No credits will be used)")
 
     generated_paths = []
-    file_count = 1
 
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-
+    # --- PROGRESS BAR ---
+    for i, line in enumerate(tqdm(lines, desc="🎙️ Generating Audio", unit="line")):
         if line.startswith("JT:"):
             speaker, text = "JT", line.replace("JT:", "").strip()
         elif line.startswith("Maddie:"):
@@ -118,20 +111,40 @@ def run_podcast_generator():
         else:
             continue
 
-        filename = f"temp_{file_count:02d}_{speaker}.mp3"
-        path = generate_audio(speaker, text, filename)
+        if dry_run:
+            continue
 
-        if path:
-            generated_paths.append(path)
-            print(f"✅ Generated: {speaker} line {file_count}")
-            file_count += 1
+        # --- CACHE SYSTEM ---
+        line_hash = get_text_hash(text, speaker)
+        cache_path = cache_dir / f"{line_hash}.mp3"
+        temp_filename = f"temp_{i:02d}_{speaker}.mp3"
+        temp_path = output_dir / temp_filename
 
-    if generated_paths:
+        if cache_path.exists():
+            shutil.copy(cache_path, temp_path)
+            generated_paths.append(str(temp_path))
+        else:
+            path = generate_audio(speaker, text, temp_filename)
+            if path:
+                shutil.copy(path, cache_path)  # Save to cache
+                generated_paths.append(path)
+
+    if not dry_run and generated_paths:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        final_filename = f"final_{timestamp}.mp3"
-        final_mp3_path = output_dir / final_filename
-        merge_audio_files(generated_paths, final_mp3_path)
+        final_filename = f"final_{script_path.stem}_{timestamp}.mp3"
+        final_path = output_dir / final_filename
+
+        if merge_audio_files(generated_paths, final_path):
+            print(f"\n⭐ SUCCESS! Podcast ready: {final_path}")
+    elif dry_run:
+        print(f"\n✅ Dry run complete. {len(lines)} lines validated.")
 
 
 if __name__ == "__main__":
-    run_podcast_generator()
+    # --- SUPPORT FOR MULTIPLE SCRIPTS ---
+    # Usage: python inworld.py s1.txt
+    # Or just run it and it defaults to s1.txt
+    target_script = sys.argv[1] if len(sys.argv) > 1 else "s1.txt"
+    is_dry = "--dry" in sys.argv
+
+    run_podcast_generator(target_script, dry_run=is_dry)

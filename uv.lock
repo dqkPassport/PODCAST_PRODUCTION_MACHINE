@@ -196,6 +196,7 @@ dependencies = [
     { name = "openai" },
     { name = "pydub" },
     { name = "python-dotenv" },
+    { name = "tqdm" },
 ]
 
 [package.metadata]
@@ -204,6 +205,7 @@ requires-dist = [
     { name = "openai", specifier = ">=2.22.0" },
     { name = "pydub", specifier = ">=0.25.1" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
+    { name = "tqdm", specifier = ">=4.67.3" },
 ]
 
 [[package]]
