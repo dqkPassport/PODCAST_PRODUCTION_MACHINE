@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 # --- INITIALIZATION ---
 load_dotenv()
-API_KEY = os.getenv("INWORLD_KEY")
+API_KEY = os.getenv("INWORLD_API_KEY")
 MODEL_ID = "inworld-tts-1.5-max"
 
 # YOUR SPECIFIC FFmpeg PATH
@@ -70,7 +70,7 @@ def merge_audio_files(file_list, output_file):
 
 
 def run_podcast_generator():
-    script_file = script_dir / "script.txt"
+    script_file = script_dir / "s1.txt"
 
     if not script_file.exists():
         print(f"❌ ERROR: Could not find script.txt in '{script_dir}'!")

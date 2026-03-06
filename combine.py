@@ -1,107 +1,64 @@
+import whisper
+import sys
 import os
-import random
-import subprocess
-
-# ===== SETTINGS =====
-INPUT_FOLDER = "final"
-OUTPUT_FILE = "final.mp3"
-
-USE_RANDOM_PAUSES = True
-MIN_PAUSE = 0.4
-MAX_PAUSE = 0.7
-
-# ====================
-
-files = sorted(
-    f for f in os.listdir(INPUT_FOLDER) if f.endswith(".mp3") and f != OUTPUT_FILE
-)
-
-if not files:
-    print("❌ No MP3 files found.")
-    exit()
-
-list_path = os.path.join(INPUT_FOLDER, "list.txt")
-silence_files = []
-
-print("Preparing files...")
-
-# Create silence files if enabled
-if USE_RANDOM_PAUSES and len(files) > 1:
-    for i in range(len(files) - 1):
-        duration = round(random.uniform(MIN_PAUSE, MAX_PAUSE), 2)
-
-        silence_name = f"pause_{i}.mp3"
-        silence_path = os.path.join(INPUT_FOLDER, silence_name)
-
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-f",
-                "lavfi",
-                "-i",
-                "anullsrc=r=44100:cl=stereo",
-                "-t",
-                str(duration),
-                "-q:a",
-                "9",
-                "-acodec",
-                "libmp3lame",
-                silence_path,
-                "-y",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-
-        silence_files.append(silence_name)
-
-        print(f"Pause {i}: {duration}s")
 
 
-# Create concat list
-with open(list_path, "w", encoding="utf-8") as f:
-    for i, file in enumerate(files):
-        path = os.path.abspath(os.path.join(INPUT_FOLDER, file)).replace("\\", "/")
-        f.write(f"file '{path}'\n")
-
-        if USE_RANDOM_PAUSES and i < len(silence_files):
-            silence_path = os.path.abspath(
-                os.path.join(INPUT_FOLDER, silence_files[i])
-            ).replace("\\", "/")
-
-            f.write(f"file '{silence_path}'\n")
+def format_time(seconds):
+    hrs = int(seconds // 3600)
+    mins = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int((seconds - int(seconds)) * 1000)
+    return f"{hrs:02}:{mins:02}:{secs:02},{millis:03}"
 
 
-print("Merging audio...")
+def generate_srt(audio_path, model_size="base"):
 
-subprocess.run(
-    [
-        "ffmpeg",
-        "-fflags",
-        "+genpts",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        list_path,
-        "-c:a",
-        "libmp3lame",
-        "-b:a",
-        "192k",
-        "-avoid_negative_ts",
-        "make_zero",
-        os.path.join(INPUT_FOLDER, OUTPUT_FILE),
-        "-y",
-    ],
-    check=True,
-)
+    print("====================================")
+    print("Loading Whisper model...")
+    print("Model:", model_size)
+    print("====================================")
 
-# Cleanup
-os.remove(list_path)
+    model = whisper.load_model(model_size)
 
-for s in silence_files:
-    os.remove(os.path.join(INPUT_FOLDER, s))
+    print("Transcribing audio...")
+    print("This may take a few minutes for long audio.")
+    print("")
 
-print("\n✅ Done!")
-print(f"Created: {INPUT_FOLDER}/{OUTPUT_FILE}")
+    result = model.transcribe(audio_path)
+
+    segments = result["segments"]
+
+    print(f"Total segments detected: {len(segments)}")
+    print("Generating SRT file...")
+    print("")
+
+    srt_path = os.path.splitext(audio_path)[0] + ".srt"
+
+    with open(srt_path, "w", encoding="utf-8") as f:
+        for i, seg in enumerate(segments, start=1):
+            start = format_time(seg["start"])
+            end = format_time(seg["end"])
+            text = seg["text"].strip()
+
+            f.write(f"{i}\n")
+            f.write(f"{start} --> {end}\n")
+            f.write(f"{text}\n\n")
+
+            # progress indicator
+            if i % 10 == 0:
+                print(f"Processed {i}/{len(segments)} segments...")
+
+    print("")
+    print("====================================")
+    print("✅ SRT generation completed!")
+    print(f"Saved to: {srt_path}")
+    print("====================================")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python generate_srt.py audio.mp3")
+
+    else:
+        audio_file = sys.argv[1]
+        generate_srt(audio_file)
