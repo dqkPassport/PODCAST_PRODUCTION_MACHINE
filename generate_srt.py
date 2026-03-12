@@ -1,3 +1,5 @@
+# python generate_srt.py final/final85.mp3
+
 import whisper
 import sys
 import os

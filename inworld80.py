@@ -1,3 +1,6 @@
+# python inworld85.py s1.txt
+
+
 import requests
 import base64
 import os
@@ -21,7 +24,8 @@ if not API_KEY:
     print("❌ ERROR: INWORLD_API_KEY not found in .env file!")
     exit()
 
-VOICES = {"JT": "Edward", "Maddie": "Lauren"}
+# If you change these names (e.g., "Timothy" to "Edward"), the cache will now reset automatically.
+VOICES = {"JT": "Timothy", "Maddie": "Lauren"}
 
 # --- FOLDER SETUP ---
 output_dir = Path("inworld")
@@ -33,8 +37,13 @@ for folder in [output_dir, script_dir, cache_dir]:
 
 
 def get_text_hash(text, speaker):
-    """3.13 Compatible hashing to identify unique lines for the Cache System"""
-    return hashlib.md5(f"{speaker}:{text}".encode()).hexdigest()
+    """
+    Improved hashing: Now includes the Voice ID.
+    If you change the voice in the VOICES dict, it generates a new hash.
+    """
+    voice_id = VOICES.get(speaker, "default")
+    combined_string = f"{speaker}:{voice_id}:{text}"
+    return hashlib.md5(combined_string.encode()).hexdigest()
 
 
 def generate_audio(voice_name, text, filename):
@@ -65,9 +74,13 @@ def merge_audio_files(file_list, output_file):
     try:
         input_streams = []
         for f in file_list:
-            delay_ms = random.randint(300, 600)
+            # Random delay between lines for natural conversation
+            delay_ms = random.randint(400, 800)
             stream = ffmpeg.input(os.path.abspath(f))
-            delayed_stream = stream.filter("adelay", f"{delay_ms}|{delay_ms}")
+
+            # Apply 85% speed (atempo=0.85) for English learners
+            slowed_stream = stream.filter("atempo", 0.8)
+            delayed_stream = slowed_stream.filter("adelay", f"{delay_ms}|{delay_ms}")
             input_streams.append(delayed_stream)
 
         joined = ffmpeg.concat(*input_streams, a=1, v=0)
@@ -114,19 +127,21 @@ def run_podcast_generator(script_filename, dry_run=False):
         if dry_run:
             continue
 
-        # --- CACHE SYSTEM ---
+        # --- SMART CACHE SYSTEM ---
         line_hash = get_text_hash(text, speaker)
         cache_path = cache_dir / f"{line_hash}.mp3"
         temp_filename = f"temp_{i:02d}_{speaker}.mp3"
         temp_path = output_dir / temp_filename
 
         if cache_path.exists():
+            # If the specific voice + text combo exists, use it
             shutil.copy(cache_path, temp_path)
             generated_paths.append(str(temp_path))
         else:
+            # Otherwise, call the API for the new voice
             path = generate_audio(speaker, text, temp_filename)
             if path:
-                shutil.copy(path, cache_path)  # Save to cache
+                shutil.copy(path, cache_path)  # Save to cache for next time
                 generated_paths.append(path)
 
     if not dry_run and generated_paths:
@@ -135,15 +150,12 @@ def run_podcast_generator(script_filename, dry_run=False):
         final_path = output_dir / final_filename
 
         if merge_audio_files(generated_paths, final_path):
-            print(f"\n⭐ SUCCESS! Podcast ready: {final_path}")
+            print(f"\n⭐ SUCCESS! New voices are ready: {final_path}")
     elif dry_run:
         print(f"\n✅ Dry run complete. {len(lines)} lines validated.")
 
 
 if __name__ == "__main__":
-    # --- SUPPORT FOR MULTIPLE SCRIPTS ---
-    # Usage: python inworld.py s1.txt
-    # Or just run it and it defaults to s1.txt
     target_script = sys.argv[1] if len(sys.argv) > 1 else "s1.txt"
     is_dry = "--dry" in sys.argv
 
