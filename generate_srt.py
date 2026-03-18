@@ -1,5 +1,3 @@
-# python generate_srt.py final/final85.mp3
-
 import whisper
 import sys
 import os
@@ -10,18 +8,22 @@ def format_time(seconds):
     mins = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
     millis = int((seconds - int(seconds)) * 1000)
+    # SRT format uses a comma for milliseconds (00:00:00,000)
     return f"{hrs:02}:{mins:02}:{secs:02},{millis:03}"
 
 
 def generate_srt(audio_path, model_size="base"):
-    print("Loading Whisper model...")
+    if not os.path.exists(audio_path):
+        print(f"❌ Error: The file '{audio_path}' was not found.")
+        return
+
+    print(f"Loading Whisper model ({model_size})...")
     model = whisper.load_model(model_size)
 
-    print("Transcribing audio...")
+    print(f"Transcribing: {audio_path}")
     result = model.transcribe(audio_path)
 
     segments = result["segments"]
-
     srt_path = os.path.splitext(audio_path)[0] + ".srt"
 
     with open(srt_path, "w", encoding="utf-8") as f:
@@ -38,8 +40,11 @@ def generate_srt(audio_path, model_size="base"):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python generate_srt.py audio.mp3")
-    else:
+    # Check if a filename was provided as an argument
+    if len(sys.argv) > 1:
         audio_file = sys.argv[1]
-        generate_srt(audio_file)
+    else:
+        # DEFAULT PATH: This is used if you just type 'python generate_srt.py'
+        audio_file = "final/final.mp3"
+
+    generate_srt(audio_file)

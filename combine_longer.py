@@ -42,7 +42,7 @@ def combine_with_random_pauses():
             # Add random delay between 500ms and 1000ms (0.5s - 1.0s)
             # We don't need a delay for the very first file (index 0)
             if i > 0:
-                delay_ms = random.randint(500, 1000)
+                delay_ms = random.randint(1000, 2000)
                 # Apply the adelay filter to both audio channels
                 stream = stream.filter("adelay", f"{delay_ms}|{delay_ms}")
 
