@@ -16,7 +16,7 @@ load_dotenv()
 API_KEY = os.getenv("INWORLD_API_KEY")
 MODEL_ID = "inworld-tts-1.5-max"
 FFMPEG_PATH = r"C:\DQK\ffmpeg\bin\ffmpeg.exe"
-VOICE_ID = "Jonah"  # Fixed to Jonah
+VOICE_ID = "Mark"  # Changed from Jonah to Mark
 
 if not API_KEY:
     print("❌ ERROR: INWORLD_API_KEY not found in .env file!")
@@ -32,7 +32,7 @@ for folder in [output_dir, script_dir, cache_dir]:
 
 
 def get_text_hash(text):
-    """Hash based on text and the specific Jonah voice."""
+    """Hash based on text and the specific Mark voice."""
     combined_string = f"{VOICE_ID}:{text}"
     return hashlib.md5(combined_string.encode()).hexdigest()
 
@@ -69,7 +69,7 @@ def merge_audio_files(file_list, output_file):
             delay_ms = random.randint(400, 700)
             stream = ffmpeg.input(os.path.abspath(f))
 
-            # Apply 80% speed (atempo=0.8) as per your original logic
+            # Apply 80% speed (atempo=0.8)
             slowed_stream = stream.filter("atempo", 0.8)
             delayed_stream = slowed_stream.filter("adelay", f"{delay_ms}|{delay_ms}")
             input_streams.append(delayed_stream)
@@ -101,12 +101,12 @@ def run_generator(script_filename, dry_run=False):
         # Filter out empty lines
         lines = [line.strip() for line in f if line.strip()]
 
-    print(f"📖 Jonah is reading: {script_filename} ({len(lines)} lines)")
+    print(f"📖 Mark is reading: {script_filename} ({len(lines)} lines)")
 
     generated_paths = []
 
     for i, line in enumerate(
-        tqdm(lines, desc="🎙️ Generating Jonah's Audio", unit="line")
+        tqdm(lines, desc="🎙️ Generating Mark's Audio", unit="line")
     ):
         # Clean the text: Remove "Name: " prefix if it exists
         clean_text = line
@@ -119,7 +119,7 @@ def run_generator(script_filename, dry_run=False):
         # --- SMART CACHE SYSTEM ---
         line_hash = get_text_hash(clean_text)
         cache_path = cache_dir / f"{line_hash}.mp3"
-        temp_filename = f"temp_{i:03d}_jonah.mp3"
+        temp_filename = f"temp_{i:03d}_mark.mp3"
         temp_path = output_dir / temp_filename
 
         if cache_path.exists():
@@ -133,11 +133,11 @@ def run_generator(script_filename, dry_run=False):
 
     if not dry_run and generated_paths:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        final_filename = f"jonah_{script_path.stem}_{timestamp}.mp3"
+        final_filename = f"mark_{script_path.stem}_{timestamp}.mp3"
         final_path = output_dir / final_filename
 
         if merge_audio_files(generated_paths, final_path):
-            print(f"\n⭐ SUCCESS! Jonah's narration is ready: {final_path}")
+            print(f"\n⭐ SUCCESS! Mark's narration is ready: {final_path}")
 
 
 if __name__ == "__main__":

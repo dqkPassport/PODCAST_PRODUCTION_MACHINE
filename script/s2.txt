@@ -1,0 +1,3 @@
+Let’s be real: most of us start our day in a "reactive" state. <break time="3s" />
+The alarm goes off, we grab our phones, and within seconds. <break time="2s" />
+We’re bombarded by emails, news, and social media.
